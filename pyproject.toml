@@ -1,0 +1,51 @@
+[project]
+name = "sglang-deployment"
+version = "0.1.0"
+description = "SGLang deployment for large language models on Slurm clusters"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "sglang[all]>=0.4.0",
+    "torch>=2.4.0",
+    "transformers>=4.45.0",
+    "huggingface-hub>=0.25.0",
+    "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "ipython>=8.18.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.8.0",
+    "ipython>=8.18.0",
+]
