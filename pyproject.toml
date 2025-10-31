@@ -10,6 +10,7 @@ dependencies = [
     "transformers>=4.45.0",
     "huggingface-hub>=0.25.0",
     "requests>=2.32.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

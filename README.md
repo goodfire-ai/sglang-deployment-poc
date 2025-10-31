@@ -18,7 +18,23 @@ This project provides infrastructure for deploying large language models (especi
 
 ## Quick Start
 
-### Installation
+### 1. Environment Setup
+
+First, configure your environment variables:
+
+```bash
+# Create .env from template
+make setup
+
+# Edit .env and add your HuggingFace token
+# Get token from: https://huggingface.co/settings/tokens
+vi .env  # or use your preferred editor
+
+# Validate configuration
+make validate
+```
+
+### 2. Installation
 
 ```bash
 # Install dependencies using uv
@@ -58,6 +74,8 @@ Edit `slurm/llama3-70b-single-node.sbatch` to customize:
 
 ## Makefile Targets
 
+- `make setup` - Create .env from .env.example (first time setup)
+- `make validate` - Validate environment configuration
 - `make install` - Install dependencies from lockfile
 - `make lock` - Update uv.lock lockfile
 - `make format` - Format code with ruff
@@ -72,10 +90,21 @@ Edit `slurm/llama3-70b-single-node.sbatch` to customize:
 
 ### Environment Variables
 
-Create a `.env` file (not tracked in git):
+The project uses a `.env` file for configuration (not tracked in git). Use `make setup` to create it from the template:
 
 ```bash
-# HuggingFace token for model access
+# Create .env from .env.example
+make setup
+
+# Validate your configuration
+make validate
+```
+
+Key environment variables in `.env`:
+
+```bash
+# HuggingFace token (REQUIRED)
+# Get from: https://huggingface.co/settings/tokens
 HF_TOKEN=your_token_here
 
 # Model path (HuggingFace or local)
@@ -87,7 +116,10 @@ SERVER_PORT=30000
 
 # GPU configuration
 TENSOR_PARALLEL_SIZE=4
+MEM_FRACTION=0.85
 ```
+
+See `.env.example` for all available configuration options.
 
 ### Slurm Configuration
 

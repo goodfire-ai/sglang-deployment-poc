@@ -1,10 +1,12 @@
-.PHONY: help install lock format lint start-local start-server health-check stop-server clean
+.PHONY: help setup validate install lock format lint start-local start-server health-check stop-server clean
 
 # Default target
 help:
 	@echo "SGLang Deployment Makefile"
 	@echo ""
 	@echo "Available targets:"
+	@echo "  setup          - Create .env from .env.example (first time setup)"
+	@echo "  validate       - Validate environment configuration"
 	@echo "  install        - Install dependencies from uv.lock"
 	@echo "  lock           - Update uv.lock lockfile"
 	@echo "  format         - Format code with ruff"
@@ -14,6 +16,26 @@ help:
 	@echo "  health-check   - Check server health"
 	@echo "  stop-server    - Stop running SGLang server"
 	@echo "  clean          - Clean cache and temporary files"
+
+# Setup: Create .env from .env.example
+setup:
+	@if [ -f .env ]; then \
+		echo ".env already exists. Skipping setup."; \
+		echo "Delete .env first if you want to recreate it from .env.example"; \
+	else \
+		cp .env.example .env; \
+		echo "Created .env from .env.example"; \
+		echo ""; \
+		echo "IMPORTANT: Edit .env and set your HuggingFace token:"; \
+		echo "  https://huggingface.co/settings/tokens"; \
+		echo ""; \
+		echo "Then run: make validate"; \
+	fi
+
+# Validate environment configuration
+validate:
+	@echo "Validating environment configuration..."
+	@uv run python scripts/validate_env.py
 
 # Install dependencies from lockfile
 install:
