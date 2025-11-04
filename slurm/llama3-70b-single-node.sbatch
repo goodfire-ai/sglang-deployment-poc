@@ -9,6 +9,7 @@
 #SBATCH --mem=400G
 #SBATCH --time=01:00:00
 #SBATCH --partition=h200-reserved
+#SBATCH --exclude=h200-reserved-145-013,h200-reserved-145-018,h200-reserved-145-019,h200-reserved-145-020,h200-reserved-145-036
 
 # Exit on error
 set -e
@@ -50,7 +51,6 @@ export NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_5,mlx5_6,mlx5_7,mlx5_8,mlx5_9
 export NCCL_IB_DISABLE=0
 export NCCL_IB_TIMEOUT=23
 export NCCL_IB_RETRY_CNT=7
-export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=ALL
 export UCX_NET_DEVICES=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
 
