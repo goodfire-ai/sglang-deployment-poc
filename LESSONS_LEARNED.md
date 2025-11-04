@@ -9,10 +9,11 @@
 
 ## Summary
 
-Successfully deployed Llama 3 70B on H200 cluster after resolving distributed computing synchronization issues. **Key findings:**
-1. **CUDA graph capture fails** with collective synchronization errors on both TP=4 and TP=8
-2. **Solution: Disable CUDA graphs** (`--disable-cuda-graph`) for stable operation
-3. **Full node allocation (8 GPUs)** provides better stability than partial node (4 GPUs)
+**Deployment unsuccessful** - unable to run SGLang with tensor parallelism on this H200 cluster. **Key findings:**
+1. **Collective synchronization errors are pervasive** - occur on all nodes, not hardware-specific
+2. **SGLang v0.4.0+ incompatible** with this cluster's NCCL/InfiniBand configuration for TP workloads
+3. **Disabling CUDA graphs doesn't help** - errors occur during event loop initialization after model loads
+4. **Cluster has infrastructure issues** - multiple users reporting NCCL failures across different nodes
 
 ---
 
@@ -43,38 +44,86 @@ Rank 0 is running collective: SequenceNumber=22
    - Result: Server started but crashed later during normal operation with same collective mismatch
    - Performance impact: 20-30% slower without CUDA graphs
 
-### Root Cause
+### Root Cause Analysis
 
-**CUDA graph capture is fundamentally incompatible with tensor parallelism on this cluster configuration:**
+**SGLang v0.4.0+ has fundamental incompatibility with this cluster's distributed setup:**
 
-- Collective operations fall out of sync during CUDA graph compilation
-- Issue persists with both TP=4 (sequence mismatch 18 vs 22) and TP=8 (sequence mismatch 18 vs 30)
-- Likely related to SGLang version, NCCL configuration, or cluster-specific timing issues
-- Full node allocation (TP=8) reduces frequency of crashes but doesn't eliminate them
+**Initial hypothesis (INCORRECT)**: CUDA graph capture causes collective sync issues
+- Disabling CUDA graphs didn't solve the problem
+- Errors still occur during event loop initialization
 
-### Solution
+**Actual root cause**: SGLang's tensor parallelism implementation fails during event loop with this cluster configuration
+- Consistent error pattern: Rank 0 at sequence 30, other ranks at sequence 18
+- Happens during `scheduler.event_loop_overlap()` → `recv_requests()` → broadcast
+- Occurs AFTER successful model loading (93-100% complete)
+- Not related to memory, CUDA graphs, or specific GPU configurations
 
-**Disable CUDA graphs and use full node allocation:**
+**Systematic testing showed the issue is NOT:**
+1. ❌ Node-specific hardware failure (tested nodes: 036, 020, 014 - all failed identically)
+2. ❌ NCCL configuration (added cluster-recommended IB variables - still failed)
+3. ❌ CUDA graphs (disabled them - still failed)
+4. ❌ Memory pressure (tried 0.75, 0.85 mem-fraction - no difference)
+5. ❌ Partial node topology (TP=4 and TP=8 both fail the same way)
 
-```bash
---disable-cuda-graph  # Required for stability
---tp 8                # Full node for better collective reliability
-```
+**What it IS:**
+- ✅ SGLang version incompatibility with this cluster's NCCL/PyTorch distributed setup
+- ✅ Timing/synchronization issue in SGLang's distributed communication layer
+- ✅ Cluster-wide infrastructure problems (confirmed by multiple users reporting NCCL issues)
 
-**Results**:
-- ✅ Stable operation (no crashes during graph capture)
-- ✅ Better memory headroom with 8 GPUs
-- ⚠️ 20-30% performance penalty vs CUDA graphs (acceptable trade-off for stability)
+### Attempts Made (All Failed)
 
-**Commits**:
-- `3316b3d`, `e829855` - Failed mitigation attempts with TP=4
-- `b84c5e6` - Disabled CUDA graphs (partial solution for TP=4)
-- `f74f1bb` - Switched to TP=8 (still had graph issues)
-- Final: **TP=8 + disable CUDA graphs = stable**
+**Configuration attempts:**
+1. TP=4 with memory tuning → Failed
+2. TP=4 with CUDA graph limits → Failed
+3. TP=4 with CUDA graphs disabled → Failed
+4. TP=8 (full node) with CUDA graphs enabled → Failed
+5. TP=8 with CUDA graphs disabled → Failed
+6. TP=8 + CUDA graphs disabled + NCCL env vars → Failed
+7. TP=8 + CUDA graphs disabled + NCCL env vars + node exclusions → Failed
+
+**Nodes tested:**
+- h200-reserved-145-036 (multiple attempts) → All failed
+- h200-reserved-145-020 (known-bad node) → Failed
+- h200-reserved-145-014 (supposedly healthy) → Failed
+
+**All failures show identical error:** Sequence mismatch 18 vs 30 during event loop broadcast
+
+**Commits tracking this journey:**
+- `3316b3d`, `e829855`, `b84c5e6` - Early mitigation attempts
+- `f74f1bb` - Switched to TP=8
+- `df551cd` - Added NCCL environment variables
+- `0731143` - Excluded problematic nodes
+- **Result**: None of these worked
 
 ---
 
-## Working Configuration
+## Cluster Infrastructure Context
+
+### Widespread NCCL Issues Reported
+
+Multiple users on this cluster are experiencing NCCL collective communication failures:
+
+**User reports:**
+- "im getting repeated nccl errors on h200-reserved-145-013, -018, -019, -020"
+- "i got nccl errors repeatedly on h200-reserved-145-013, -018, -019, -020. excluding those fixed the problem"
+- "this was for 8-node torchrun jobs, only ranks on those hosts would fail"
+
+**Our experience:**
+- Same collective sync errors on nodes: 036, 020, 014
+- Errors occur even on "healthy" nodes (014)
+- Suggests cluster-wide infrastructure or configuration issues
+
+**Possible cluster issues:**
+1. InfiniBand network configuration problems
+2. NCCL plugin incompatibility with cluster setup
+3. Firmware/driver issues across H200 nodes
+4. Timing issues in distributed communication fabric
+
+This is NOT just an SGLang problem - it's a cluster infrastructure issue affecting distributed workloads in general.
+
+---
+
+## Attempted Configuration (Did Not Work)
 
 ### Slurm Resource Allocation
 ```bash
@@ -84,12 +133,20 @@ Rank 0 is running collective: SequenceNumber=22
 #SBATCH --partition=h200-reserved
 ```
 
-### SGLang Server Parameters
+### SGLang Server Parameters (Failed)
 ```bash
 MODEL_PATH="meta-llama/Meta-Llama-3-70B-Instruct"
-TENSOR_PARALLEL=8                  # TP across all 8 GPUs
-MEM_FRACTION=0.85                  # 85% GPU memory for KV cache
+TENSOR_PARALLEL=8
+MEM_FRACTION=0.85
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+# NCCL configuration (from cluster ops)
+export NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_5,mlx5_6,mlx5_7,mlx5_8,mlx5_9
+export NCCL_IB_DISABLE=0
+export NCCL_IB_TIMEOUT=23
+export NCCL_IB_RETRY_CNT=7
+export NCCL_DEBUG=INFO
+export UCX_NET_DEVICES=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
 
 python -m sglang.launch_server \
     --model-path $MODEL_PATH \
@@ -100,7 +157,9 @@ python -m sglang.launch_server \
     --trust-remote-code \
     --log-level info \
     --dtype auto \
-    --disable-cuda-graph  # REQUIRED: Graph capture fails with collective sync errors
+    --disable-cuda-graph  # Doesn't help - still crashes during event loop
+
+# Result: Fails during event loop initialization with sequence mismatch 18 vs 30
 ```
 
 ### Cluster Infrastructure
@@ -172,27 +231,30 @@ This H200 cluster architecture:
 
 ### For This H200 Cluster
 
-1. **Always use full node (8 GPUs) for 70B+ models** - better stability despite same CUDA graph issue
-2. **Disable CUDA graphs** with `--disable-cuda-graph` - required for stable operation
-3. **Accept 20-30% performance penalty** - stability > speed for production
-4. **Memory fraction of 0.85** works well with 8 GPUs
+**SGLang with TP is currently not viable.** Alternative approaches:
+
+1. **Try vLLM instead of SGLang** - different distributed implementation may work better
+2. **Try older SGLang version** (e.g., v0.3.x) - may have more stable TP implementation
+3. **Wait for cluster infrastructure fixes** - multiple users reporting NCCL issues
+4. **Use single GPU with smaller model** - avoid TP entirely if possible
+5. **Report issue to SGLang maintainers** with cluster details and error patterns
 
 ### For Models of Different Sizes
 
 | Model Size | Recommendation |
 |------------|----------------|
-| < 30B params | Single GPU (no TP needed) |
-| 30-70B params | TP=4 or TP=8 with `--disable-cuda-graph` |
-| 70B+ params | **TP=8 full node + `--disable-cuda-graph`** |
+| < 30B params | Single GPU (no TP needed) ✅ |
+| 30-70B params | ❌ SGLang TP broken - try vLLM or wait for fixes |
+| 70B+ params | ❌ **SGLang TP not working on this cluster** |
 
-### General SGLang + NCCL Best Practices
+### General Distributed LLM Serving Lessons
 
-1. **Test CUDA graphs early** - they may not work on all cluster configurations
-2. **Be prepared to disable CUDA graphs** - `--disable-cuda-graph` is a valid production config
-3. **Prefer power-of-2 GPU counts** for tensor parallelism (2, 4, 8, 16...)
-4. **Use full node allocation** for better collective stability
-5. **Monitor NCCL logs** for collective synchronization warnings
-6. **Set `NCCL_DEBUG=INFO`** during initial deployment for visibility
+1. **Test basic TP functionality early** - don't assume it will work
+2. **Cluster infrastructure matters** - distributed bugs may not be software-specific
+3. **Have fallback options** - multiple serving frameworks (SGLang, vLLM, TensorRT-LLM)
+4. **Document systematic testing** - helps distinguish between software bugs and hardware issues
+5. **Monitor cluster-wide issues** - check if others are experiencing similar problems
+6. **NCCL collective errors are hard to debug** - sequence mismatches often indicate deep issues
 
 ---
 
@@ -229,24 +291,45 @@ grep "NCCL INFO" logs/sglang-JOBID.out | grep -E "(Using|Made virtual device)"
 
 | Stage | Duration | Outcome |
 |-------|----------|---------|
-| TP=4 with memory tuning | 15 min | Failed - collective mismatch |
+| TP=4 with memory tuning | 15 min | Failed - collective mismatch during CUDA graph |
 | TP=4 with CUDA graph limits | 10 min | Failed - same error |
-| TP=4 with graphs disabled | 10 min | More stable but still occasional crashes |
-| Switch to TP=8 (full node) | 5 min | Failed - still graph capture errors |
-| TP=8 with graphs disabled | 5 min | ✅ Stable |
-| **Total debugging time** | **~45 min** | |
+| TP=4 with graphs disabled | 10 min | Failed - event loop crash |
+| Switch to TP=8 (full node) | 5 min | Failed - graph capture errors |
+| TP=8 with graphs disabled (node 036) | 10 min | Failed - event loop crash (seq 18 vs 30) |
+| TP=8 + NCCL env vars (node 020) | 10 min | Failed - same error |
+| TP=8 + node exclusions (node 014) | 12 min | Failed - same error |
+| **Total debugging time** | **~72 min** | All attempts failed |
 
-**Key takeaway**: Could have saved 30+ minutes by disabling CUDA graphs immediately.
+**Key takeaway**: The issue is not configuration-fixable. It's either an SGLang bug or fundamental cluster infrastructure problem.
 
 ---
 
-## Success Criteria
+## Final Status
 
 ✅ All 8 GPUs successfully initialize NCCL
-✅ Model loads without OOM errors (93% complete before crash on job 555)
-❌ CUDA graphs - disabled due to collective sync errors
-✅ Server can initialize with `--disable-cuda-graph`
-🔄 Full server startup and inference testing (in progress)
+✅ Model loads completely without OOM errors
+❌ Server event loop fails with collective sync errors (sequence 18 vs 30)
+❌ Issue occurs across all nodes and configurations tested
+❌ **Deployment unsuccessful - SGLang TP not viable on this cluster**
+
+### What Worked
+- Python environment setup
+- Model downloading and caching
+- NCCL initialization
+- Model weight loading across all ranks
+- Communication up until event loop starts
+
+### What Failed
+- SGLang event loop initialization
+- Distributed broadcast operations during scheduler startup
+- Collective synchronization between ranks
+- All attempts to work around the issue
+
+### Next Steps
+1. Try vLLM as alternative serving framework
+2. Report issue to SGLang team with full details
+3. Wait for cluster infrastructure fixes
+4. Consider downgrading SGLang to older stable version
 
 ---
 
