@@ -5,10 +5,10 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --gres=gpu:h100:4
+#SBATCH --gres=gpu:h200:4
 #SBATCH --mem=200G
-#SBATCH --time=24:00:00
-#SBATCH --partition=gpu
+#SBATCH --time=01:00:00
+#SBATCH --partition=h200-reserved
 
 # Exit on error
 set -e
