@@ -23,10 +23,10 @@ echo "Node: $SLURM_NODELIST"
 echo "GPUs: $SLURM_GPUS_ON_NODE"
 echo "=========================================="
 
-# Load required modules (adjust to your cluster)
-module purge
-module load cuda/12.1
-module load python/3.10
+# Set up CUDA environment (no module system on this cluster)
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+export CUDA_HOME=/usr/local/cuda
 
 # Activate virtual environment
 # Adjust path to your project directory
