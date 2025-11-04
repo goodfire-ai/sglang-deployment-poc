@@ -74,7 +74,8 @@ python -m sglang.launch_server \
     --mem-fraction-static $MEM_FRACTION \
     --trust-remote-code \
     --log-level info \
-    --dtype auto
+    --dtype auto \
+    --cuda-graph-max-bs 16
 
 echo "=========================================="
 echo "Job finished at: $(date)"
