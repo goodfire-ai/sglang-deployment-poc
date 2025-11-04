@@ -55,7 +55,7 @@ export HF_TOKEN=${HF_TOKEN:-""}  # Set in your environment or .env file
 MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3-70B-Instruct"}
 TENSOR_PARALLEL=${TENSOR_PARALLEL:-4}
 SERVER_PORT=${SERVER_PORT:-30000}
-MEM_FRACTION=${MEM_FRACTION:-0.85}
+MEM_FRACTION=${MEM_FRACTION:-0.75}
 
 echo "=========================================="
 echo "Configuration:"
