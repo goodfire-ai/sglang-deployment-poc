@@ -66,6 +66,7 @@ echo "  Memory Fraction: $MEM_FRACTION"
 echo "=========================================="
 
 # Launch SGLang server with tensor parallelism
+# Note: CUDA graphs disabled due to collective sync issues with TP=4
 python -m sglang.launch_server \
     --model-path $MODEL_PATH \
     --tp $TENSOR_PARALLEL \
@@ -75,7 +76,7 @@ python -m sglang.launch_server \
     --trust-remote-code \
     --log-level info \
     --dtype auto \
-    --cuda-graph-max-bs 16
+    --disable-cuda-graph
 
 echo "=========================================="
 echo "Job finished at: $(date)"
