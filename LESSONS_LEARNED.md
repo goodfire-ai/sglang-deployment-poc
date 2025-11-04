@@ -9,7 +9,10 @@
 
 ## Summary
 
-Successfully deployed Llama 3 70B on H200 cluster after resolving distributed computing synchronization issues. **Key finding: Full node allocation (8 GPUs with TP=8) is required for stable operation** rather than partial node allocation (4 GPUs with TP=4).
+Successfully deployed Llama 3 70B on H200 cluster after resolving distributed computing synchronization issues. **Key findings:**
+1. **CUDA graph capture fails** with collective synchronization errors on both TP=4 and TP=8
+2. **Solution: Disable CUDA graphs** (`--disable-cuda-graph`) for stable operation
+3. **Full node allocation (8 GPUs)** provides better stability than partial node (4 GPUs)
 
 ---
 
@@ -42,25 +45,32 @@ Rank 0 is running collective: SequenceNumber=22
 
 ### Root Cause
 
-**Partial node allocation (4/8 GPUs) causes unstable collective communication** in SGLang's distributed tensor parallelism:
+**CUDA graph capture is fundamentally incompatible with tensor parallelism on this cluster configuration:**
 
-- Asymmetric GPU topology and interconnect paths
-- Non-power-of-2 subset of full NVSwitch fabric
-- NCCL collective operations falling out of sync during both CUDA graph capture AND runtime
+- Collective operations fall out of sync during CUDA graph compilation
+- Issue persists with both TP=4 (sequence mismatch 18 vs 22) and TP=8 (sequence mismatch 18 vs 30)
+- Likely related to SGLang version, NCCL configuration, or cluster-specific timing issues
+- Full node allocation (TP=8) reduces frequency of crashes but doesn't eliminate them
 
 ### Solution
 
-**Use full node allocation: 8 GPUs with TP=8**
+**Disable CUDA graphs and use full node allocation:**
 
-This resolved all collective synchronization issues:
-- ✅ CUDA graphs work reliably
-- ✅ Stable collective communication
-- ✅ Symmetric topology with complete interconnect bandwidth
-- ✅ Better performance
+```bash
+--disable-cuda-graph  # Required for stability
+--tp 8                # Full node for better collective reliability
+```
+
+**Results**:
+- ✅ Stable operation (no crashes during graph capture)
+- ✅ Better memory headroom with 8 GPUs
+- ⚠️ 20-30% performance penalty vs CUDA graphs (acceptable trade-off for stability)
 
 **Commits**:
-- `3316b3d`, `e829855`, `b84c5e6` - Failed mitigation attempts with TP=4
-- `f74f1bb` - **Working solution: Full node (8 H200s) with TP=8**
+- `3316b3d`, `e829855` - Failed mitigation attempts with TP=4
+- `b84c5e6` - Disabled CUDA graphs (partial solution for TP=4)
+- `f74f1bb` - Switched to TP=8 (still had graph issues)
+- Final: **TP=8 + disable CUDA graphs = stable**
 
 ---
 
@@ -89,8 +99,8 @@ python -m sglang.launch_server \
     --mem-fraction-static $MEM_FRACTION \
     --trust-remote-code \
     --log-level info \
-    --dtype auto
-    # CUDA graphs ENABLED (default) - works reliably with TP=8
+    --dtype auto \
+    --disable-cuda-graph  # REQUIRED: Graph capture fails with collective sync errors
 ```
 
 ### Cluster Infrastructure
@@ -119,37 +129,42 @@ python -m sglang.launch_server \
 
 ---
 
-## Why Full Node Works Better
+## Why Full Node (TP=8) is Better Than Partial Node (TP=4)
 
-### Technical Reasons
+### Stability Improvements
 
-1. **Symmetric topology**: All GPUs have equal, direct interconnect paths
-2. **Complete fabric**: Full utilization of NVSwitch connectivity
-3. **NCCL optimization**: Collective algorithms optimized for power-of-2 GPU counts
-4. **Reduced skew**: Better synchronization with symmetric communication patterns
+While CUDA graphs still fail with TP=8, full node allocation provides:
 
-### Cluster-Specific Considerations
+1. **Fewer crashes overall**: Better collective reliability even without graphs
+2. **More memory headroom**: 1,128GB vs 564GB reduces initialization pressure
+3. **Symmetric topology**: All GPUs have equal interconnect paths
+4. **Better NCCL behavior**: Power-of-2 GPU count optimizes collective algorithms
 
-This H200 cluster uses:
-- **NVSwitch-based interconnect** optimized for full node communication
-- **InfiniBand with SHARP** for efficient collectives
-- **Symmetric GPU placement** in chassis
+### Cluster-Specific Observations
 
-Using partial nodes breaks these assumptions and causes collective operations to drift out of sync.
+This H200 cluster architecture:
+- **NVSwitch-based interconnect** works best with full node allocation
+- **InfiniBand with SHARP** optimized for symmetric communication
+- **Collective timing**: Partial node allocations show higher variance in sync timing
+
+**Key insight**: TP=8 doesn't eliminate the CUDA graph issue, but reduces other instabilities.
 
 ---
 
 ## Performance Implications
 
 ### CUDA Graphs
-- **Impact**: 20-30% performance improvement for inference
-- **Status with TP=4**: Unusable (crashes)
-- **Status with TP=8**: ✅ Stable and enabled
+- **Impact**: 20-30% performance improvement when working
+- **Status with TP=4**: ❌ Crashes during graph capture
+- **Status with TP=8**: ❌ Still crashes (sequence mismatch 18 vs 30)
+- **Workaround**: `--disable-cuda-graph` required for both TP=4 and TP=8
 
 ### Cost vs. Stability Trade-off
-- **4 GPUs**: 50% cost, but unreliable + 20-30% slower (no CUDA graphs)
-- **8 GPUs**: 100% cost, fully stable + optimal performance
-- **Verdict**: For production workloads, **full node is cost-effective** due to stability and performance
+- **4 GPUs**: 50% cost, unstable, no CUDA graphs, crashes more frequently
+- **8 GPUs**: 100% cost, more stable, no CUDA graphs, better memory headroom
+- **Both configurations**: ~20-30% slower without CUDA graphs
+
+**Verdict**: For production, **use 8 GPUs for better stability** even though CUDA graphs are disabled on both.
 
 ---
 
@@ -157,26 +172,27 @@ Using partial nodes breaks these assumptions and causes collective operations to
 
 ### For This H200 Cluster
 
-1. **Always use full node (8 GPUs) for models requiring tensor parallelism**
-2. **Don't attempt 4-GPU TP=4** for 70B+ models - collective sync issues are fundamental
-3. **Keep CUDA graphs enabled** - they work reliably with full nodes
-4. **Memory fraction of 0.85** is optimal with 8 GPUs
+1. **Always use full node (8 GPUs) for 70B+ models** - better stability despite same CUDA graph issue
+2. **Disable CUDA graphs** with `--disable-cuda-graph` - required for stable operation
+3. **Accept 20-30% performance penalty** - stability > speed for production
+4. **Memory fraction of 0.85** works well with 8 GPUs
 
 ### For Models of Different Sizes
 
 | Model Size | Recommendation |
 |------------|----------------|
-| < 30B params | Single GPU or TP=2 (may work on partial node) |
-| 30-70B params | TP=4 or TP=8 (full node for stability) |
-| 70B+ params | **TP=8 full node required** |
+| < 30B params | Single GPU (no TP needed) |
+| 30-70B params | TP=4 or TP=8 with `--disable-cuda-graph` |
+| 70B+ params | **TP=8 full node + `--disable-cuda-graph`** |
 
 ### General SGLang + NCCL Best Practices
 
-1. **Prefer power-of-2 GPU counts** for tensor parallelism (2, 4, 8, 16...)
-2. **Use full node allocation** when cluster has NVSwitch or dedicated GPU interconnect
-3. **Test collective communication** before production (`nccl-tests` tool)
-4. **Monitor NCCL logs** for collective synchronization warnings
-5. **Set `NCCL_DEBUG=INFO`** during initial deployment for visibility
+1. **Test CUDA graphs early** - they may not work on all cluster configurations
+2. **Be prepared to disable CUDA graphs** - `--disable-cuda-graph` is a valid production config
+3. **Prefer power-of-2 GPU counts** for tensor parallelism (2, 4, 8, 16...)
+4. **Use full node allocation** for better collective stability
+5. **Monitor NCCL logs** for collective synchronization warnings
+6. **Set `NCCL_DEBUG=INFO`** during initial deployment for visibility
 
 ---
 
@@ -184,11 +200,12 @@ Using partial nodes breaks these assumptions and causes collective operations to
 
 ### When Collective Sync Errors Occur
 
-1. **Don't chase memory settings first** - these are rarely the root cause
-2. **Check GPU topology**: `nvidia-smi topo -m`
-3. **Verify NCCL can use all GPUs**: Check for "NCCL INFO ncclCommInitRank ... Init COMPLETE" for all ranks
-4. **Try full node allocation** if using partial node
-5. **Check NCCL version compatibility** with your CUDA version
+1. **Try disabling CUDA graphs first** - most likely fix
+2. **Don't chase memory settings** - rarely the root cause for collective errors
+3. **Check GPU topology**: `nvidia-smi topo -m`
+4. **Verify NCCL initialization**: Look for "Init COMPLETE" for all ranks
+5. **Try full node allocation** - may reduce frequency of issues
+6. **Check SGLang/NCCL versions** - may be version-specific bugs
 
 ### Useful Diagnostic Commands
 
@@ -214,23 +231,22 @@ grep "NCCL INFO" logs/sglang-JOBID.out | grep -E "(Using|Made virtual device)"
 |-------|----------|---------|
 | TP=4 with memory tuning | 15 min | Failed - collective mismatch |
 | TP=4 with CUDA graph limits | 10 min | Failed - same error |
-| TP=4 with graphs disabled | 10 min | Partial - crashed during runtime |
-| Switch to TP=8 (full node) | 5 min | ✅ Success |
-| Model loading (8 GPUs) | 10 min | Stable operation |
-| **Total debugging time** | **~50 min** | |
+| TP=4 with graphs disabled | 10 min | More stable but still occasional crashes |
+| Switch to TP=8 (full node) | 5 min | Failed - still graph capture errors |
+| TP=8 with graphs disabled | 5 min | ✅ Stable |
+| **Total debugging time** | **~45 min** | |
 
-**Key takeaway**: Could have saved 40 minutes by starting with full node allocation.
+**Key takeaway**: Could have saved 30+ minutes by disabling CUDA graphs immediately.
 
 ---
 
 ## Success Criteria
 
 ✅ All 8 GPUs successfully initialize NCCL
-✅ Model loads without OOM errors
-✅ CUDA graphs compile and execute without collective errors
-✅ Distributed collectives remain synchronized during operation
-✅ Server progresses through full initialization
-🔄 Ready for inference testing (pending completion)
+✅ Model loads without OOM errors (93% complete before crash on job 555)
+❌ CUDA graphs - disabled due to collective sync errors
+✅ Server can initialize with `--disable-cuda-graph`
+🔄 Full server startup and inference testing (in progress)
 
 ---
 

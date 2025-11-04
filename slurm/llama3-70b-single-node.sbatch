@@ -66,7 +66,7 @@ echo "  Memory Fraction: $MEM_FRACTION"
 echo "=========================================="
 
 # Launch SGLang server with tensor parallelism
-# Using full node (8 GPUs) for better stability and performance
+# CUDA graphs disabled - collective sync issues during graph capture on this cluster
 python -m sglang.launch_server \
     --model-path $MODEL_PATH \
     --tp $TENSOR_PARALLEL \
@@ -75,7 +75,8 @@ python -m sglang.launch_server \
     --mem-fraction-static $MEM_FRACTION \
     --trust-remote-code \
     --log-level info \
-    --dtype auto
+    --dtype auto \
+    --disable-cuda-graph
 
 echo "=========================================="
 echo "Job finished at: $(date)"
