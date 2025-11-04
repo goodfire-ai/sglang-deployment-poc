@@ -44,7 +44,16 @@ source .venv/bin/activate
 
 # Set environment variables
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+# NCCL configuration for cluster InfiniBand (from Andromeda/cluster ops)
+export NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_5,mlx5_6,mlx5_7,mlx5_8,mlx5_9
+export NCCL_IB_DISABLE=0
+export NCCL_IB_TIMEOUT=23
+export NCCL_IB_RETRY_CNT=7
 export NCCL_DEBUG=INFO
+export NCCL_DEBUG_SUBSYS=ALL
+export UCX_NET_DEVICES=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 # HuggingFace configuration
