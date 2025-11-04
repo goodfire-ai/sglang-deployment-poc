@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --gres=gpu:h200:4
-#SBATCH --mem=200G
+#SBATCH --gres=gpu:h200:8
+#SBATCH --mem=400G
 #SBATCH --time=01:00:00
 #SBATCH --partition=h200-reserved
 
@@ -43,7 +43,7 @@ fi
 source .venv/bin/activate
 
 # Set environment variables
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export NCCL_DEBUG=INFO
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
@@ -53,9 +53,9 @@ export HF_TOKEN=${HF_TOKEN:-""}  # Set in your environment or .env file
 
 # Model configuration
 MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3-70B-Instruct"}
-TENSOR_PARALLEL=${TENSOR_PARALLEL:-4}
+TENSOR_PARALLEL=${TENSOR_PARALLEL:-8}
 SERVER_PORT=${SERVER_PORT:-30000}
-MEM_FRACTION=${MEM_FRACTION:-0.75}
+MEM_FRACTION=${MEM_FRACTION:-0.85}
 
 echo "=========================================="
 echo "Configuration:"
@@ -66,7 +66,7 @@ echo "  Memory Fraction: $MEM_FRACTION"
 echo "=========================================="
 
 # Launch SGLang server with tensor parallelism
-# Note: CUDA graphs disabled due to collective sync issues with TP=4
+# Using full node (8 GPUs) for better stability and performance
 python -m sglang.launch_server \
     --model-path $MODEL_PATH \
     --tp $TENSOR_PARALLEL \
@@ -75,8 +75,7 @@ python -m sglang.launch_server \
     --mem-fraction-static $MEM_FRACTION \
     --trust-remote-code \
     --log-level info \
-    --dtype auto \
-    --disable-cuda-graph
+    --dtype auto
 
 echo "=========================================="
 echo "Job finished at: $(date)"
