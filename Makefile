@@ -1,4 +1,4 @@
-.PHONY: help setup validate install lock format lint start-local start-server health-check stop-server clean
+.PHONY: help setup validate install lock format lint start-local start-server health-check chat stop-server clean
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  start-local    - Start SGLang server locally (dev mode)"
 	@echo "  start-server   - Start SGLang server with custom parameters"
 	@echo "  health-check   - Check server health"
+	@echo "  chat           - Interactive chat with server (test inference speed)"
 	@echo "  stop-server    - Stop running SGLang server"
 	@echo "  clean          - Clean cache and temporary files"
 
@@ -84,6 +85,17 @@ start-server:
 health-check:
 	@echo "Checking SGLang server health..."
 	@curl -s http://$(or $(SERVER_HOST),localhost):$(or $(SERVER_PORT),30000)/health || echo "Server not responding"
+
+# Interactive chat with server
+# Usage: make chat [HOST=localhost] [PORT=30000]
+chat:
+	@echo "Starting interactive chat..."
+	@echo "Make sure the server is running (make start-server or sbatch)"
+	@echo ""
+	uv run python scripts/chat.py \
+		$(if $(HOST),--host $(HOST),) \
+		$(if $(PORT),--port $(PORT),) \
+		$(if $(MODEL_PATH),--model $(MODEL_PATH),)
 
 # Stop running SGLang server (finds process by port)
 stop-server:

@@ -10,6 +10,7 @@ This project provides infrastructure for deploying large language models (especi
 - Makefile for common operations
 - Slurm batch scripts for cluster deployment
 - Support for tensor parallelism across multiple GPUs
+- Interactive chat client for testing
 
 ## Prerequisites
 
@@ -44,33 +45,15 @@ make install
 uv sync
 ```
 
-### Local Development
-
-```bash
-# Format code
-make format
-
-# Lint code
-make lint
-
-# Start server locally (for testing, CPU mode)
-make start-local
-```
-
-### Cluster Deployment
-
-#### Single-Node Multi-GPU (Llama 3 70B)
+### 3. Deploy & Test
 
 ```bash
 # Submit Slurm job for Llama 3 70B on 4-8 H100 GPUs
 sbatch slurm/llama3-70b-single-node.sbatch
-```
 
-Edit `slurm/llama3-70b-single-node.sbatch` to customize:
-- Number of GPUs (`--gres=gpu:h100:N`)
-- Tensor parallelism size (`--tp`)
-- Model path
-- Memory settings
+# Once server is running, test with interactive chat
+make chat HOST=your-cluster-node PORT=30000
+```
 
 ## Makefile Targets
 
@@ -83,6 +66,7 @@ Edit `slurm/llama3-70b-single-node.sbatch` to customize:
 - `make start-local` - Start SGLang server locally
 - `make start-server` - Start server with custom parameters
 - `make health-check` - Check server health
+- `make chat` - Interactive chat with server (test inference speed)
 - `make stop-server` - Stop running server
 - `make clean` - Clean cache and temporary files
 
@@ -155,45 +139,38 @@ python -m sglang.launch_server \
     --mem-fraction-static 0.85
 ```
 
-### Query Server
+### Interactive Chat (Hello World Test)
+
+The easiest way to test your server and see inference speed:
 
 ```bash
-# Health check
-curl http://localhost:30000/health
+# Start interactive chat (assumes server is running)
+make chat
 
-# Generate text (OpenAI-compatible API)
-curl http://localhost:30000/v1/completions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "model": "meta-llama/Meta-Llama-3-70B-Instruct",
-        "prompt": "Once upon a time",
-        "max_tokens": 100
-    }'
+# Or connect to a remote server
+make chat HOST=your-server-hostname PORT=30000
 ```
 
-## Troubleshooting
+This opens an interactive chat session where you can:
+- Test the server is working correctly
+- Get real-time inference speed metrics (tokens/sec)
+- Have multi-turn conversations
+- Use commands: `/reset` (clear history), `/quit` (exit), `/help` (show help)
 
-### Out of Memory
-- Reduce `--mem-fraction-static` (try 0.8 or 0.85)
-- Increase tensor parallelism size (`--tp`)
-- Use quantization (`--quantization fp8`)
+Example session:
+```
+======================================================================
+SGLang Interactive Chat
+======================================================================
 
-### Slow Performance
-- Ensure high-speed GPU interconnect (NVLink)
-- Check tensor parallelism isn't too aggressive
-- Consider using data parallelism for throughput
+Server: localhost:30000
+Model:  meta-llama/Meta-Llama-3-70B-Instruct
 
-### CUDA Errors
-- Set `CUDA_HOME` environment variable
-- Check CUDA compatibility (requires CUDA 12.1+)
-- Try alternative attention backend: `--attention-backend triton`
+Commands:
+  /reset  - Clear conversation history
+  /quit   - Exit chat
+  /help   - Show this help message
 
-## Resources
+======================================================================
 
-- [SGLang Documentation](https://docs.sglang.ai/)
-- [SGLang GitHub](https://github.com/sgl-project/sglang)
-- [Server Arguments Reference](https://docs.sglang.ai/advanced_features/server_arguments.html)
-
-## License
-
-This deployment configuration is provided as-is. See SGLang's license for framework terms.
+You: Hello! Can you explain what tensor parallelism is?
