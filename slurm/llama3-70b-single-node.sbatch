@@ -65,6 +65,7 @@ MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3-70B-Instruct"}
 TENSOR_PARALLEL=${TENSOR_PARALLEL:-8}
 SERVER_PORT=${SERVER_PORT:-30000}
 MEM_FRACTION=${MEM_FRACTION:-0.85}
+SERVER_FLAGS=${SERVER_FLAGS:-""}
 
 echo "=========================================="
 echo "Configuration:"
@@ -72,6 +73,7 @@ echo "  Model: $MODEL_PATH"
 echo "  Tensor Parallelism: $TENSOR_PARALLEL"
 echo "  Port: $SERVER_PORT"
 echo "  Memory Fraction: $MEM_FRACTION"
+echo "  Extra Server Flags: ${SERVER_FLAGS:-<none>}"
 echo "=========================================="
 
 # Launch SGLang server with tensor parallelism
@@ -85,7 +87,8 @@ python -m sglang.launch_server \
     --trust-remote-code \
     --log-level info \
     --dtype auto \
-    --disable-cuda-graph
+    --disable-cuda-graph \
+    $SERVER_FLAGS
 
 echo "=========================================="
 echo "Job finished at: $(date)"

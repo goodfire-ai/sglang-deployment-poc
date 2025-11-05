@@ -338,3 +338,44 @@ grep "NCCL INFO" logs/sglang-JOBID.out | grep -E "(Using|Made virtual device)"
 - **SGLang Docs**: https://docs.sglang.ai/
 - **NCCL Best Practices**: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/
 - **Multi-GPU Tensor Parallelism**: https://docs.sglang.ai/advanced_features/tensor_parallelism.html
+
+---
+
+## November 5 Follow-Up (Codex)
+
+### Fresh observations
+- The virtual environment currently ships **sglang 0.5.2** and **PyTorch 2.8.0+cu128** (`.venv/bin/python -c "import sglang, torch; print(sglang.__version__, torch.__version__)"`), which is newer than the 0.4.x stack captured earlier and includes PyTorch’s stricter collective fingerprint enforcement.
+- The crash happens inside `Scheduler.recv_requests()` while calling `broadcast_pyobj` over the TP CPU (Gloo) process group, i.e., before any NCCL traffic is issued (`sglang/srt/managers/scheduler.py:1002-1053`, `sglang/srt/utils.py:1026-1072`).
+- Rank 0 hitting sequence 30 while the other ranks stall at 18 means that roughly six extra broadcast cycles (size + payload) completed on the source rank while lagging ranks were stuck elsewhere in the overlap loop. This points to a scheduler ordering bug instead of a transport failure.
+
+### Working hypotheses
+1. **Overlap scheduler regression** – The new overlap event loop (`event_loop_overlap`) can let different TP ranks re-enter `recv_requests()` at slightly different times; PyTorch 2.8 now errors out immediately when that happens. `--disable-overlap-schedule` should force the older `event_loop_normal` path where all ranks call `recv_requests()` in lockstep.
+2. **Receive skipping** – If `--scheduler-recv-interval` had been increased via environment/config, some ranks could legally skip `recv_requests()` entirely, causing the broadcast order to diverge. Explicitly passing `--scheduler-recv-interval 1` guards against that.
+3. **Gloo instability on management fabric** – Scheduler broadcasts always use Gloo/CPU even though the rest of TP uses NCCL/NVLink. Gloo is riding the cluster’s management Ethernet and is much noisier. Older SGLang versions did not split out this CPU group, so downgrading to 0.4.x (or forcing the control plane onto NCCL via a patch) is another avenue.
+
+### Immediate experiments to queue (not yet run)
+1. **Disable overlap scheduling** – Launch via `SERVER_FLAGS="--disable-overlap-schedule --scheduler-recv-interval 1"` (the Slurm script now exposes the `SERVER_FLAGS` hook). Expect ~5‑8 % lower throughput; success would confirm the bug lives in the overlap loop.
+2. **Collect richer diagnostics** – Extend `SERVER_FLAGS` with `--enable-p2p-check --enable-nan-detection` and export `TORCH_SHOW_CPP_STACKTRACES=1`, `TORCH_NCCL_ASYNC_ERROR_HANDLING=0` before the run to capture deeper traces if the mismatch reappears.
+3. **Roll back SGLang** – Inside the allocated node run `uv pip install "sglang[all]==0.4.4"` (wheel is already cached) and re-run both overlap and non-overlap modes. If 0.4.x works, we can bisect or file a targeted upstream issue.
+4. **Independent NCCL smoke test** – Before launching SGLang, run `torchrun --standalone --nproc_per_node=8 scripts/nccl_allreduce_smoke.py` to prove that NCCL itself is healthy on the selected node. Attach this log when escalating to cluster ops or SGLang maintainers.
+
+### Additional instrumentation ideas
+- Set `SGLANG_LOG_LEVEL=debug` plus `TORCH_DISTRIBUTED_DEBUG=DETAIL` (already in the script) to correlate scheduler timestamps with the fingerprint counters.
+- Add `export NCCL_COLLNET_ENABLE=0` and keep `NCCL_DEBUG_SUBSYS=ALL` so that SHARP is disabled while debugging Gloo issues.
+- Capture a short `nsys profile -t mpi,nvtx,cuda python -m sglang.launch_server ...` run to see whether any TP ranks diverge before `recv_requests()` completes.
+
+### Alternative frameworks / fallbacks
+1. **vLLM 0.5.x** – Supports TP=8 on Hopper/H200 without this scheduler. Template launch:
+   ```bash
+   python -m vllm.entrypoints.openai.api_server \
+     --model meta-llama/Meta-Llama-3-70B-Instruct \
+     --tensor-parallel-size 8 \
+     --dtype bfloat16 \
+     --enforce-eager \
+     --worker-use-ray
+   ```
+2. **TensorRT-LLM** – Provides Hopper reference configs for TP=8. Worth evaluating once CUDA graph stability is no longer a blocker.
+
+### Escalation guidance
+- If `--disable-overlap-schedule` resolves the mismatch, open a SGLang GitHub issue referencing `scheduler.event_loop_overlap()` and PyTorch 2.8’s collective fingerprint enforcement so the maintainers can patch the overlap loop.
+- If even the NCCL smoke test fails, escalate to cluster ops with the affected node IDs plus `logs/sglang-*.err` so they can inspect the InfiniBand/Gloo fabric.
