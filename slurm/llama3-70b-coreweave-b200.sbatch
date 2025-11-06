@@ -53,6 +53,22 @@ echo "=========================================="
 PROJECT_DIR=${PROJECT_DIR:-$HOME/sglang-deployment-poc}
 cd $PROJECT_DIR
 
+# FAIL FAST: Load and validate HF_TOKEN from .env BEFORE installing dependencies
+if [ -f .env ]; then
+    source .env
+fi
+
+if [ -z "$HF_TOKEN" ]; then
+    echo "=========================================="
+    echo "ERROR: HF_TOKEN not set in .env file"
+    echo "Please create .env and add your HuggingFace token"
+    echo "=========================================="
+    exit 1
+fi
+
+echo "✓ HF_TOKEN loaded successfully"
+export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
+
 # Install uv if not already installed
 if ! command -v uv &> /dev/null; then
     echo "Installing uv package manager..."
@@ -81,14 +97,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export NCCL_DEBUG=INFO
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-# HuggingFace configuration
-export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
-export HF_TOKEN=${HF_TOKEN:-""}  # Set in .env file
-
-# Load HF_TOKEN from .env if it exists
-if [ -f .env ]; then
-    export $(grep -v '^#' .env | grep HF_TOKEN | xargs)
-fi
+# HuggingFace configuration already set above (fail-fast check)
 
 # Model configuration
 MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3-70B-Instruct"}
