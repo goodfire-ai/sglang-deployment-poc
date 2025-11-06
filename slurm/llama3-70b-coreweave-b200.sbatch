@@ -66,8 +66,14 @@ if [ -z "$HF_TOKEN" ]; then
     exit 1
 fi
 
-echo "✓ HF_TOKEN loaded successfully"
+# Trim whitespace from token (common issue with .env files)
+export HF_TOKEN=$(echo "$HF_TOKEN" | tr -d '[:space:]')
+
+echo "✓ HF_TOKEN loaded successfully (length: ${#HF_TOKEN} chars)"
 export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
+
+# Also set HUGGING_FACE_HUB_TOKEN for compatibility
+export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
 
 # Install uv if not already installed
 if ! command -v uv &> /dev/null; then
