@@ -57,11 +57,10 @@ cd $PROJECT_DIR
 if ! command -v uv &> /dev/null; then
     echo "Installing uv package manager..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-# Ensure uv is in PATH
-export PATH="$HOME/.cargo/bin:$PATH"
+# Ensure uv is in PATH (both possible install locations)
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
 # Install/sync dependencies if .venv doesn't exist or is incomplete
 if [ ! -d ".venv" ] || [ ! -f ".venv/pyvenv.cfg" ]; then
